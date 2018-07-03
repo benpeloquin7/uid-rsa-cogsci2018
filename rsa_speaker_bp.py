@@ -218,26 +218,30 @@ if __name__ == "__main__":
     parser.add_argument('--debug-mode', action='store_true',
                         help="Debug mode flag -- don't run multiprocess to "
                              "facilitate debugging.")
-
     args = parser.parse_args()
     if args.debug_mode:
         print("Running in debug mode.")
 
+    print("Using {} cpus".format(args.num_processes))
+
     (strings, pairs) = strings()
     pool = multiprocessing.Pool(processes=args.num_processes)
+
+    # Grid search over `k` and `c`
+    ks = [float(x) / 20.0 for x in range(20, 41)]
+    cs = [float(x) / 10.0 for x in range(0, 21)]
+    cmbs = itertools.product(ks, cs)
+
     results = []
     for seed in tqdm.tqdm(range(args.start_seed, args.start_seed + args.num_seeds)):
-        # Grid search over `c` and `k`
-        for k in [float(x) / 20.0 for x in range(20, 41)]:
-            if args.debug_mode:
-                for c in [float(x) / 10.0 for x in range(0, 21)]:
-                    # Note hard-coded 10 generations for debugging mode
-                    d = find_fixed_point(strings, pairs, k, c, args.alpha,
-                                         args.tolerance, seed, 10)
-                    results.extend(d)
-            else:
-                # Run multi-process
-                results.extend([pool.apply(find_fixed_point, (strings, pairs, k, c, args.alpha, args.tolerance, seed, args.max_generations)) for c in [float(x) / 10.0 for x in range(0, 21)]])
+        if args.debug_mode:
+            for k, c in cmbs:
+                d = find_fixed_point(strings, pairs, k, c, args.alpha,
+                                     args.tolerance, seed, 10)
+                results.extend(d)
+        else:
+            # Run multi-process
+            results.extend([pool.apply(find_fixed_point, (strings, pairs, k, c, args.alpha, args.tolerance, seed, args.max_generations)) for k, c in cmbs])
 
     # Flatten results
     results = [itr for res in results for itr in res]
