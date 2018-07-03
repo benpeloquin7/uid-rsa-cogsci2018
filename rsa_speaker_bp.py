@@ -232,7 +232,7 @@ if __name__ == "__main__":
     ks = [float(x) / 20.0 for x in range(20, 41)]
     cs = [float(x) / 10.0 for x in range(0, 21)]
     seeds = range(args.start_seed, args.start_seed + args.num_seeds)
-    cmbs = itertools.product(ks, cs)
+    cmbs = list(itertools.product(ks, cs))
 
     results = []
     for seed in tqdm.tqdm(seeds):
