@@ -207,7 +207,7 @@ if __name__ == "__main__":
                         help='Tolerance level [default: 1e-4]')
     parser.add_argument('--alpha', type=float, default=1.0,
                         help='RSA alpha parameter [default: 1.0]')
-    parser.add_argument('--num_processes', type=int,
+    parser.add_argument('--num-processes', type=int,
                         default=multiprocessing.cpu_count(),
                         help='Number of cores to use [default: multiprocessing.cpu_count()]')
     parser.add_argument('--max-generations', type=int, default=100,
