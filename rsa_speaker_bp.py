@@ -2,8 +2,7 @@
 UID-RSA Cognitives Science Soceity 2018 code.
 
 Example run:
-    >>> python rsa_speaker_bp.py --start_seed 0 \
-            --num_seeds 2 --num_processes 4 --out-dir outputs
+    >>> python rsa_speaker_bp.py --start_seed 0 --num_seeds 2 --num_processes 4 --out-dir outputs
 
 As the code was set up at the time of CogSci camera ready submission on May 14,
 there is no use in setting P>21, but if you have fewer than 21 cores available
@@ -27,7 +26,7 @@ import warnings
 
 import lm
 
-warnings.filterwarnings("error")
+# warnings.filterwarnings("error")
 logging.getLogger().setLevel(logging.INFO)
 
 
@@ -149,6 +148,21 @@ def find_fixed_point(strings, pairs, k, c, alpha, tol, seed, max_generations):
     old_r = numpy.corrcoef(np[0], np[1])[0, 1]
     numgenerations = 0
     r = numpy.nan
+
+    # Append initial
+    results = []
+    results.append({
+        'B_prob': B_prob,
+        't_prob': t_prob,
+        'num_generations': numgenerations,
+        'r': old_r,
+        'that_rate': old_that_rate,
+        'k': k,
+        'c': c,
+        'seed': seed,
+        'max_generations': max_generations,
+        'tolerance': tol,
+        'is_final_generation': False})
     while numgenerations < max_generations:
         numgenerations += 1
         wpairs1 = S1(lm0, wpairs, k,c , alpha)
@@ -156,22 +170,48 @@ def find_fixed_point(strings, pairs, k, c, alpha, tol, seed, max_generations):
         lm_no_t1 = learn_lm_ignoring_that(wstrings,wpairs1)
         that_rate = overall_that_rate(wpairs1)
         np1 = record_nextword_prob_and_that_use(lm_no_t1, wpairs1)
-        try:
-            r = numpy.corrcoef(np1[0], np1[1])[0, 1]
-        except RuntimeWarning:
-            import pdb; pdb.set_trace();
+        r = numpy.corrcoef(np1[0], np1[1])[0, 1]
 
-        # If that_rate disappears or becomes obligatory
+        # Check for conventionalization
         if that_rate == 0.0 or that_rate == 1.0:
             break
-        # If we meet tolerance thresholds
+        # Check tolerance threshold
         if abs(r - old_r) < tol and abs(that_rate - old_that_rate) < tol:
             break
         wpairs = wpairs1
         lm0 = lm1
         old_r = r
         old_that_rate = that_rate
-    return (B_prob,t_prob,numgenerations,r, that_rate)
+        # Append incremental
+        results.append({
+            'B_prob': B_prob,
+            't_prob': t_prob,
+            'num_generations': numgenerations,
+            'r': r,
+            'that_rate': that_rate,
+            'k': k,
+            'c': c,
+            'seed': seed,
+            'max_generations': max_generations,
+            'tolerance': tol,
+            'is_final_generation': False})
+    # Append Final
+    if numgenerations < max_generations:
+        results.append({
+            'B_prob': B_prob,
+            't_prob': t_prob,
+            'num_generations': numgenerations,
+            'r': r,
+            'that_rate': that_rate,
+            'k': k,
+            'c': c,
+            'seed': seed,
+            'max_generations': max_generations,
+            'tolerance': tol,
+            'is_final_generation': True})
+    else:
+        results[-1]['is_final_generation'] = True
+    return results
 
 
 if __name__ == "__main__":
@@ -184,7 +224,9 @@ if __name__ == "__main__":
                         help='Tolerance level [default: 1e-4]')
     parser.add_argument('--alpha', type=float, default=1.0,
                         help='RSA alpha parameter [default: 1.0]')
-    parser.add_argument('--num_processes', type=int, default=21)
+    parser.add_argument('--num_processes', type=int,
+                        default=multiprocessing.cpu_count(),
+                        help='Number of cores to use [default: multiprocessing.cpu_count()]')
     parser.add_argument('--max-generations', type=int, default=100,
                         help='Max number of generations to run [default: 100]')
     parser.add_argument('--out-dir', type=str, default='./output/')
@@ -194,36 +236,27 @@ if __name__ == "__main__":
                              "facilitate debugging.")
 
     args = parser.parse_args()
+    if args.debug_mode:
+        print("Running in debug mode.")
+
     (strings, pairs) = strings()
     pool = multiprocessing.Pool(processes=args.num_processes)
-    data = []
-    for seed in tqdm.tqdm(range(args.start_seed, args.start_seed+args.num_seeds)):
+    results = []
+    for seed in tqdm.tqdm(range(args.start_seed, args.start_seed + args.num_seeds)):
         # Grid search over `c` and `k`
-        for k in [float(x)/20.0 for x in range(20,41)]:
+        for k in [float(x) / 20.0 for x in range(20, 41)]:
             if args.debug_mode:
-                results = []
                 for c in [float(x) / 10.0 for x in range(0, 21)]:
+                    # Note hard-coded 10 generations for debugging mode
                     d = find_fixed_point(strings, pairs, k, c, args.alpha,
-                                         args.tolerance, seed, args.max_generations)
-                    results.append((d, c))
-
+                                         args.tolerance, seed, 10)
+                    results.extend(d)
             else:
                 # Run multi-process
-                results = [(pool.apply(find_fixed_point, (strings, pairs, k, c, args.alpha, args.tolerance, seed, args.max_generations)), c) for c in [float(x) / 10.0 for x in range(0, 21)]]
-            # Cache results
-            for ((B_prob, t_prob, numgenerations, r, that_rate), c) in results:
-                d_curr = {
-                    'B_prob': B_prob,
-                    't_prob': t_prob,
-                    'num_generations': numgenerations,
-                    'r': r,
-                    'that_rate': that_rate,
-                    'c': c,
-                    'k': k,
-                    'tolerance': args.tolerance,
-                    'seed': seed
-                }
-                data.append(d_curr)
+                results.extend([pool.apply(find_fixed_point, (strings, pairs, k, c, args.alpha, args.tolerance, seed, args.max_generations)) for c in [float(x) / 10.0 for x in range(0, 21)]])
+
+    # Flatten results
+    results = [itr for res in results for itr in res]
 
     # Check for existing outputs directory
     current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -233,5 +266,5 @@ if __name__ == "__main__":
     # Save simulation data
     f_p = os.path.join(args.out_dir, "results.csv")
     logging.info("Saving to {}".format(f_p))
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(results)
     df.to_csv(f_p)
