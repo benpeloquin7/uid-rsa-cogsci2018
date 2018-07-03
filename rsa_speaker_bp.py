@@ -2,7 +2,10 @@
 UID-RSA Cognitives Science Soceity 2018 code.
 
 Example run:
-    >>> python rsa_speaker_bp.py --start_seed 0 --num_seeds 2 --num_processes 4 --out-dir outputs
+    >>> python rsa_speaker_bp.py --start_seed 40 --num_seeds 2 --out-dir outputs --out-file results-2.csv
+
+Example run with debugging:
+    >>> python rsa_speaker_bp.py --start_seed 0 --num_seeds 2 --num_processes 4 --out-dir outputs --debug-mode
 
 As the code was set up at the time of CogSci camera ready submission on May 14,
 there is no use in setting P>21, but if you have fewer than 21 cores available
@@ -13,7 +16,6 @@ in analyze_results.R.
 
 """
 
-import copy
 import itertools
 import logging
 import math
@@ -26,12 +28,13 @@ import warnings
 
 import lm
 
-# warnings.filterwarnings("error")
+warnings.filterwarnings("error")  # catch numpy.corrcoef RunTimeWarining
 logging.getLogger().setLevel(logging.INFO)
 
 
-def invariant_elements(arr):
-    return all([abs(x - arr[0]) < 1e-5 for x in arr])
+def create_dict(ks, vs):
+    return {k: v for k, v in zip(ks, vs)}
+
 
 def check_dir(dir_path):
     """Check for directory and create if not exist."""
@@ -39,19 +42,20 @@ def check_dir(dir_path):
         os.makedirs(dir_path)
 
 
-def score_string(lm,s,k,c):
+def score_string(lm, s, k, c):
     """k: UID exponent; c: string cost"""
-    return lm.score_string_UID(s,k) + c*len(s)
+    return lm.score_string_UID(s, k) + c * len(s)
 
-def reweight_string_set(lm,strings,total_mass,k,c,alpha):
+
+def reweight_string_set(lm, strings, total_mass, k, c, alpha):
     """The RSA S1 speaker model on the alternative utterance set consisting of
     the strings in the string set, all for the same meaning.
     Reallocate total_mass among them"""
     scores = [0] * len(strings)
     for i in range(len(strings)):
-        scores[i] = math.exp(- alpha * score_string(lm,strings[i],k,c))
+        scores[i] = math.exp(- alpha * score_string(lm, strings[i], k, c))
     z = sum(scores)
-    return [total_mass*x/z for x in scores]
+    return [total_mass * x / z for x in scores]
     
 
 def strings():
@@ -72,6 +76,7 @@ def strings():
                 pairs.append(thispair)
     return((strings,pairs))
 
+
 def weight_strings(strings,pairs,B_prob=0.5,t_prob=0.5,random_state=numpy.random):
     """Initialize weights (probabilities) for a set of strings & string pairs"""
     ws = random_state.dirichlet([1.0]*len(strings))
@@ -81,29 +86,33 @@ def weight_strings(strings,pairs,B_prob=0.5,t_prob=0.5,random_state=numpy.random
     return (weighted_strings,weighted_string_pairs)
 
 
-def S1(lm,weighted_string_pairs,k,c,alpha):
+def S1(lm, weighted_string_pairs, k, c, alpha):
     """Reweight the weighted string pairs according to reweight_string_set() for each pair"""
-    string_pairs = [(s1,s2) for ((s1,_w1),(s2,_w2)) in weighted_string_pairs]
-    string_pair_masses = [w1+w2 for ((_s1,w1),(_s2,w2)) in weighted_string_pairs]
+    string_pairs = [(s1, s2) for ((s1, _w1), (s2, _w2)) in
+                    weighted_string_pairs]
+    string_pair_masses = [w1 + w2 for ((_s1,w1),(_s2,w2)) in weighted_string_pairs]
     new_pair_weights = [reweight_string_set(lm,p,m,k,c,alpha) for (p,m) in zip(string_pairs,string_pair_masses)]
     return [((s1,w1),(s2,w2)) for ((w1,w2),((s1,_old_w1),(s2,_old_w2))) in zip(new_pair_weights,weighted_string_pairs)]
 
-def learn_lm(weighted_strings,weighted_string_pairs):
+
+def learn_lm(weighted_strings, weighted_string_pairs):
     result = lm.LM()
     tmp = []
-    for ((s1,w1),(s2,w2)) in weighted_string_pairs:
-        tmp = tmp + [(s1,w1),(s2,w2)]
+    for ((s1, w1), (s2, w2)) in weighted_string_pairs:
+        tmp = tmp + [(s1, w1), (s2, w2)]
     result.learn_lm(weighted_strings + tmp)
     return result
 
-def learn_lm_ignoring_that(weighted_strings,weighted_string_pairs):
+
+def learn_lm_ignoring_that(weighted_strings, weighted_string_pairs):
     wsp = []
     for i in range(len(weighted_string_pairs)):
         p = weighted_string_pairs[i]
-        wsp.append( ((p[0][0][0:2]+p[0][0][3:len(p[0][0])],p[0][1]),p[1]) )
-    return learn_lm(weighted_strings,wsp)
-        
-def compare_old_new_weights(weighted_string_pairs,reweighted_string_pairs):
+        wsp.append(((p[0][0][0:2] + p[0][0][3:len(p[0][0])], p[0][1]), p[1]))
+    return learn_lm(weighted_strings, wsp)
+
+
+def compare_old_new_weights(weighted_string_pairs, reweighted_string_pairs):
     """Sanity check function for testing program behavior"""
     for i in range(len(weighted_string_pairs)):
         print "#\n#"
@@ -149,28 +158,21 @@ def find_fixed_point(strings, pairs, k, c, alpha, tol, seed, max_generations):
     numgenerations = 0
     r = numpy.nan
 
-    # Append initial
-    results = []
-    results.append({
-        'B_prob': B_prob,
-        't_prob': t_prob,
-        'num_generations': numgenerations,
-        'r': old_r,
-        'that_rate': old_that_rate,
-        'k': k,
-        'c': c,
-        'seed': seed,
-        'max_generations': max_generations,
-        'tolerance': tol,
-        'is_final_generation': False})
+    data = []  # Running data store
+
+    # (1) Append initial
+    ks = ['B_prob', 't_prob', 'num_generations', 'r', 'that_rate', 'k', 'c',
+          'seed', 'max_generations', 'tolerance', 'is_final_generation']
+    vs = [B_prob, t_prob, numgenerations, old_r, old_that_rate, k, c, seed,
+          max_generations, tol, False]
+    data.append(create_dict(ks, vs))
     while numgenerations < max_generations:
         numgenerations += 1
-        wpairs1 = S1(lm0, wpairs, k,c , alpha)
-        lm1 = learn_lm(wstrings,wpairs1)
-        lm_no_t1 = learn_lm_ignoring_that(wstrings,wpairs1)
+        wpairs1 = S1(lm0, wpairs, k, c, alpha)
+        lm1 = learn_lm(wstrings, wpairs1)
+        lm_no_t1 = learn_lm_ignoring_that(wstrings, wpairs1)
         that_rate = overall_that_rate(wpairs1)
         np1 = record_nextword_prob_and_that_use(lm_no_t1, wpairs1)
-        r = numpy.corrcoef(np1[0], np1[1])[0, 1]
 
         # Check for conventionalization
         if that_rate == 0.0 or that_rate == 1.0:
@@ -178,40 +180,21 @@ def find_fixed_point(strings, pairs, k, c, alpha, tol, seed, max_generations):
         # Check tolerance threshold
         if abs(r - old_r) < tol and abs(that_rate - old_that_rate) < tol:
             break
+
+        # Correlation between next word (no (t)) prob and likelihood of (t)
+        r = numpy.corrcoef(np1[0], np1[1])[0, 1]
         wpairs = wpairs1
         lm0 = lm1
         old_r = r
         old_that_rate = that_rate
-        # Append incremental
-        results.append({
-            'B_prob': B_prob,
-            't_prob': t_prob,
-            'num_generations': numgenerations,
-            'r': r,
-            'that_rate': that_rate,
-            'k': k,
-            'c': c,
-            'seed': seed,
-            'max_generations': max_generations,
-            'tolerance': tol,
-            'is_final_generation': False})
-    # Append Final
-    if numgenerations < max_generations:
-        results.append({
-            'B_prob': B_prob,
-            't_prob': t_prob,
-            'num_generations': numgenerations,
-            'r': r,
-            'that_rate': that_rate,
-            'k': k,
-            'c': c,
-            'seed': seed,
-            'max_generations': max_generations,
-            'tolerance': tol,
-            'is_final_generation': True})
-    else:
-        results[-1]['is_final_generation'] = True
-    return results
+
+        # (2) Append incremental
+        vs = [B_prob, t_prob, numgenerations, r, that_rate, k, c, seed,
+              max_generations, tol, False]
+        data.append(create_dict(ks, vs))
+
+    data[-1]['is_final_generation'] = True
+    return data
 
 
 if __name__ == "__main__":
@@ -229,6 +212,7 @@ if __name__ == "__main__":
                         help='Number of cores to use [default: multiprocessing.cpu_count()]')
     parser.add_argument('--max-generations', type=int, default=100,
                         help='Max number of generations to run [default: 100]')
+    parser.add_argument('--out-file', type=str, default='results.csv')
     parser.add_argument('--out-dir', type=str, default='./output/')
 
     parser.add_argument('--debug-mode', action='store_true',
@@ -264,7 +248,7 @@ if __name__ == "__main__":
     check_dir(target_dir)
 
     # Save simulation data
-    f_p = os.path.join(args.out_dir, "results.csv")
+    f_p = os.path.join(args.out_dir, args.out_file)
     logging.info("Saving to {}".format(f_p))
     df = pd.DataFrame(results)
     df.to_csv(f_p)
