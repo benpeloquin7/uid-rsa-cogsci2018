@@ -2,10 +2,10 @@
 UID-RSA Cognitives Science Soceity 2018 code.
 
 Example run:
-    >>> python rsa_speaker_bp.py --start_seed 40 --num_seeds 2 --out-dir outputs --out-file results-2.csv
+    >>> python rsa_speaker_bp.py --start-seed 40 --num-seeds 2 --out-dir outputs --out-file results-2.csv
 
 Example run with debugging:
-    >>> python rsa_speaker_bp.py --start_seed 0 --num_seeds 2 --num_processes 4 --out-dir outputs --debug-mode
+    >>> python rsa_speaker_bp.py --start-seed 40 --num-seeds 2 --out-dir outputs --out-file results-2.csv --debug-mode
 
 As the code was set up at the time of CogSci camera ready submission on May 14,
 there is no use in setting P>21, but if you have fewer than 21 cores available
@@ -201,8 +201,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--start_seed', type=int, default=0)
-    parser.add_argument('--num_seeds', type=int, default=100)
+    parser.add_argument('--start-seed', type=int, default=0)
+    parser.add_argument('--num-seeds', type=int, default=100)
     parser.add_argument('--tolerance', type=float, default=1e-4,
                         help='Tolerance level [default: 1e-4]')
     parser.add_argument('--alpha', type=float, default=1.0,
@@ -219,6 +219,7 @@ if __name__ == "__main__":
                         help="Debug mode flag -- don't run multiprocess to "
                              "facilitate debugging.")
     args = parser.parse_args()
+
     if args.debug_mode:
         print("Running in debug mode.")
 
@@ -230,10 +231,11 @@ if __name__ == "__main__":
     # Grid search over `k` and `c`
     ks = [float(x) / 20.0 for x in range(20, 41)]
     cs = [float(x) / 10.0 for x in range(0, 21)]
+    seeds = range(args.start_seed, args.start_seed + args.num_seeds)
     cmbs = itertools.product(ks, cs)
 
     results = []
-    for seed in tqdm.tqdm(range(args.start_seed, args.start_seed + args.num_seeds)):
+    for seed in tqdm.tqdm(seeds):
         if args.debug_mode:
             for k, c in cmbs:
                 d = find_fixed_point(strings, pairs, k, c, args.alpha,
