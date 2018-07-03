@@ -2,9 +2,8 @@
 UID-RSA Cognitives Science Soceity 2018 code.
 
 Example run:
-    >>> python rsa_speaker.py --start_seed I --num_seeds N --num_processes P > results.txt
-    python rsa_speaker.py --start_seed 0 --num_seeds 2 --num_processes 4 > results.txt
-
+    >>> python rsa_speaker_bp.py --start_seed 0 \
+            --num_seeds 2 --num_processes 4 --out-dir outputs
 
 As the code was set up at the time of CogSci camera ready submission on May 14,
 there is no use in setting P>21, but if you have fewer than 21 cores available
@@ -30,6 +29,16 @@ import lm
 
 warnings.filterwarnings("error")
 logging.getLogger().setLevel(logging.INFO)
+
+
+def invariant_elements(arr):
+    return all([abs(x - arr[0]) < 1e-5 for x in arr])
+
+def check_dir(dir_path):
+    """Check for directory and create if not exist."""
+    if not os.path.isdir(dir_path):
+        os.makedirs(dir_path)
+
 
 def score_string(lm,s,k,c):
     """k: UID exponent; c: string cost"""
@@ -105,16 +114,19 @@ def compare_old_new_weights(weighted_string_pairs,reweighted_string_pairs):
         print "Old: ", weighted_string_pairs[i][1]
         print "New: ", reweighted_string_pairs[i][1]
 
-def record_nextword_prob_and_that_use(lm_no_t,weighted_string_pairs):
-    """This function will not generalize well, as written -- it is very specific to the length-2 context, second-in-pair-is-t-omitted case"""
+
+def record_nextword_prob_and_that_use(lm_no_t, weighted_string_pairs):
+    """This function will not generalize well, as written -- it is very
+    specific to the length-2 context, second-in-pair-is-t-omitted case"""
     nextword_probs = []
     that_probs = []
     for x in weighted_string_pairs:
         nextword_prob = lm_no_t.condprob(x[1][0][0:2],x[1][0][2])
         nextword_probs.append(nextword_prob)
         that_prob = x[0][1] / (x[0][1]+x[1][1])
-        that_probs.append(that_prob)        
-    return (nextword_probs,that_probs)
+        that_probs.append(that_prob)
+    return (nextword_probs, that_probs)
+
 
 def overall_that_rate(weighted_string_pairs):
     Z = 0.0
@@ -122,45 +134,44 @@ def overall_that_rate(weighted_string_pairs):
     for p in weighted_string_pairs:
         q += p[0][1]
         Z += p[0][1] + p[1][1]
-    return q/Z
+    return q / Z
 
-def find_fixed_point(strings,pairs,k,c,alpha,tol,seed):
+
+def find_fixed_point(strings, pairs, k, c, alpha, tol, seed, max_generations):
     random_state = numpy.random.RandomState(seed)
-    B_prob = random_state.beta(1,1)
-    t_prob = random_state.beta(1,1)    
-    (wstrings,wpairs) = weight_strings(strings,pairs,B_prob,t_prob)
+    B_prob = random_state.beta(1, 1)
+    t_prob = random_state.beta(1, 1)
+    (wstrings, wpairs) = weight_strings(strings, pairs, B_prob, t_prob)
     lm0 = learn_lm(wstrings,wpairs)
-    lm_no_t0 = learn_lm_ignoring_that(wstrings,wpairs)
-    np = record_nextword_prob_and_that_use(lm_no_t0,wpairs)
-    try:
-        old_r = numpy.corrcoef(np[0],np[1])[0,1]
-    except RuntimeWarning:
-            import pdb; pdb.set_trace();
+    lm_no_t0 = learn_lm_ignoring_that(wstrings, wpairs)
+    np = record_nextword_prob_and_that_use(lm_no_t0, wpairs)
     old_that_rate = overall_that_rate(wpairs)
+    old_r = numpy.corrcoef(np[0], np[1])[0, 1]
     numgenerations = 0
-    while numgenerations < 100:
+    r = numpy.nan
+    while numgenerations < max_generations:
         numgenerations += 1
-        wpairs1 = S1(lm0,wpairs,k,c,alpha)
-        #compare_old_new_weights(wpairs,wpairs1)
+        wpairs1 = S1(lm0, wpairs, k,c , alpha)
         lm1 = learn_lm(wstrings,wpairs1)
         lm_no_t1 = learn_lm_ignoring_that(wstrings,wpairs1)
-        np1 = record_nextword_prob_and_that_use(lm_no_t1,wpairs1)
+        that_rate = overall_that_rate(wpairs1)
+        np1 = record_nextword_prob_and_that_use(lm_no_t1, wpairs1)
         try:
             r = numpy.corrcoef(np1[0], np1[1])[0, 1]
         except RuntimeWarning:
-            import pdb;
-            pdb.set_trace();
-        that_rate = overall_that_rate(wpairs1)
+            import pdb; pdb.set_trace();
+
+        # If that_rate disappears or becomes obligatory
         if that_rate == 0.0 or that_rate == 1.0:
             break
+        # If we meet tolerance thresholds
         if abs(r - old_r) < tol and abs(that_rate - old_that_rate) < tol:
-        #if abs(that_rate - old_that_rate) < tol:
             break
         wpairs = wpairs1
         lm0 = lm1
         old_r = r
         old_that_rate = that_rate
-    return (B_prob,t_prob,numgenerations,r,that_rate)
+    return (B_prob,t_prob,numgenerations,r, that_rate)
 
 
 if __name__ == "__main__":
@@ -169,21 +180,37 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--start_seed', type=int, default=0)
     parser.add_argument('--num_seeds', type=int, default=100)
+    parser.add_argument('--tolerance', type=float, default=1e-4,
+                        help='Tolerance level [default: 1e-4]')
+    parser.add_argument('--alpha', type=float, default=1.0,
+                        help='RSA alpha parameter [default: 1.0]')
     parser.add_argument('--num_processes', type=int, default=21)
+    parser.add_argument('--max-generations', type=int, default=100,
+                        help='Max number of generations to run [default: 100]')
     parser.add_argument('--out-dir', type=str, default='./output/')
 
+    parser.add_argument('--debug-mode', action='store_true',
+                        help="Debug mode flag -- don't run multiprocess to "
+                             "facilitate debugging.")
+
     args = parser.parse_args()
-    tol = 0.001
     (strings, pairs) = strings()
     pool = multiprocessing.Pool(processes=args.num_processes)
-    print "Tolerance\tk\tc\tB_prob\tt_prob\tseed\tgenerations\tthatrate\tr"
     data = []
     for seed in tqdm.tqdm(range(args.start_seed, args.start_seed+args.num_seeds)):
         # Grid search over `c` and `k`
         for k in [float(x)/20.0 for x in range(20,41)]:
-            results = [(pool.apply(find_fixed_point,
-                                   (strings,pairs,k,c,1.0,1e-04,seed)), c)
-                       for c in [float(x)/10.0 for x in range(0,21)]]
+            if args.debug_mode:
+                results = []
+                for c in [float(x) / 10.0 for x in range(0, 21)]:
+                    d = find_fixed_point(strings, pairs, k, c, args.alpha,
+                                         args.tolerance, seed, args.max_generations)
+                    results.append((d, c))
+
+            else:
+                # Run multi-process
+                results = [(pool.apply(find_fixed_point, (strings, pairs, k, c, args.alpha, args.tolerance, seed, args.max_generations)), c) for c in [float(x) / 10.0 for x in range(0, 21)]]
+            # Cache results
             for ((B_prob, t_prob, numgenerations, r, that_rate), c) in results:
                 d_curr = {
                     'B_prob': B_prob,
@@ -193,24 +220,18 @@ if __name__ == "__main__":
                     'that_rate': that_rate,
                     'c': c,
                     'k': k,
+                    'tolerance': args.tolerance,
                     'seed': seed
                 }
                 data.append(d_curr)
 
     # Check for existing outputs directory
-    parent_dir = os.path.dirname(os.path.realpath(__file__))
-    if not os.path.isdir(os.path.join(parent_dir, args.out_dir)):
-        os.makedirs(os.path.join(parent_dir, args.out_dir))
+    current_dir = os.path.dirname(os.path.realpath(__file__))
+    target_dir = os.path.join(current_dir, args.out_dir)
+    check_dir(target_dir)
 
+    # Save simulation data
     f_p = os.path.join(args.out_dir, "results.csv")
     logging.info("Saving to {}".format(f_p))
     df = pd.DataFrame(data)
     df.to_csv(f_p)
-
-            #
-            #
-            # for ((B_prob, t_prob, numgenerations, r, that_rate), c) in results:
-            #     print "\t".join([str(x) for x in [tol, k, c, B_prob, t_prob,
-            #                                       seed, numgenerations,
-            #                                       that_rate, r]])
-            # sys.stdout.flush()
