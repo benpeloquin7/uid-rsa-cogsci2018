@@ -209,12 +209,12 @@ if __name__ == "__main__":
                         help='RSA alpha parameter [default: 1.0]')
     parser.add_argument('--num-processes', type=int,
                         default=multiprocessing.cpu_count(),
-                        help='Number of cores to use [default: multiprocessing.cpu_count()]')
+                        help='Number of cores to use '
+                             '[default: multiprocessing.cpu_count()]')
     parser.add_argument('--max-generations', type=int, default=100,
                         help='Max number of generations to run [default: 100]')
     parser.add_argument('--out-file', type=str, default='results.csv')
     parser.add_argument('--out-dir', type=str, default='./output/')
-
     parser.add_argument('--debug-mode', action='store_true',
                         help="Debug mode flag -- don't run multiprocess to "
                              "facilitate debugging.")
