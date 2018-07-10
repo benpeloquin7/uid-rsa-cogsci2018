@@ -1,0 +1,261 @@
+---
+title: "analyze_results_bp"
+author: "Ben"
+date: "7/2/2018"
+output: html_document
+---
+
+# Notes
+
+  * Relation between initital `t_prob` and `B_prob` and eventual stability
+  * Few (0.13) of simulations result in optional stability...
+
+# Interperation
+
+### Recursion vs generational change interpretation?
+  * Anything significant about this interpretation?
+
+
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(knitr)
+library(tidyverse)
+```
+
+```{r read-data}
+f_p <- 'results-100.csv'
+df_results <- read.csv(file.path(getwd(), 'outputs', f_p))
+df_results <- df_results %>%
+  mutate(is_final_generation=ifelse(is_final_generation=="True", TRUE, FALSE))
+```
+
+```{r report}
+cat(paste0(length(unique(df_results$seed))), "simulations run")
+```
+
+```{r counting-nas, eval=FALSE, echo=FALSE, message=FALSE}
+# The original implementation was leading to lots of NaNs.
+# This code was examining that behavior.
+knitr::kable(
+df_results %>%
+  filter(is_final_generation) %>%
+  summarise(total=n(),
+            cnt_na=sum(is.na(r)),
+            prop_na=cnt_na/total))
+
+# NOTE (BP): NAs look related to the `that-rate`. If that-rate goes to 0 or 1 there will be no
+# intergenerational change???
+# df_results %>%
+#   filter(that_rate > 0.001, that_rate < 0.999) %>%
+#   summarise(sum(is.na(r)))
+```
+
+# Trajectories
+```{r stable-results-list}
+# Get stable trajectories
+stables <- df_results %>% 
+  mutate(klass=paste0('k-', k, 'c-', c, 'seed-', seed)) %>%
+  filter(is_final_generation) %>%
+  mutate(stable=ifelse(that_rate > 0.001 & that_rate < 0.999, TRUE, FALSE)) %>%
+  filter(stable)
+stables <- stables$klass
+```
+
+## `that-rate` trajectories
+```{r plot-all-that-rate-trajectories}
+# Plot all trajectories  
+n_samples <- 100
+seed_samples <- sample(df_results$seed, n_samples)
+df_results %>%
+  filter(seed %in% seed_samples) %>%
+  mutate(klass=paste0('k-', k, 'c-', c, 'seed-', seed),
+         num_generations=as.numeric(num_generations),
+         stable=ifelse(klass %in% stables, 'stable-optionality', 'conventionalized')) %>%
+  ggplot(aes(x=num_generations, y=that_rate, col=stable, group=klass)) +
+    geom_line(alpha=0.3) +
+    theme_classic() +
+    theme(legend.position="none") +
+    ggtitle("that-rate trajectories")
+```
+
+```{r plot-facet-that-rate-trajectories}
+# Facet by initial B_prob, t_prob
+n_samples <- 10
+seed_samples <- sample(df_results$seed, n_samples)
+df_results %>%
+  filter(seed %in% seed_samples) %>%
+  mutate(klass=paste0('k-', k, 'c-', c, 'seed-', seed),
+         num_generations=as.numeric(num_generations),
+         stable=ifelse(klass %in% stables, 'stable-optionality', 'conventionalized')) %>%
+  ggplot(aes(x=num_generations, y=that_rate, col=stable, group=klass)) +
+    geom_line(alpha=0.3) +
+    theme_classic() +
+    theme(legend.position="none") +
+    facet_grid(round(t_prob, 3)*round(B_prob, 3)~.) +
+    ggtitle(paste0(n_samples, " samples"))
+```
+
+## `r` trajectories
+```{r plot-all-r-trajectories}
+df_results %>%
+  mutate(klass=paste0('k-', k, 'c-', c, 'seed-', seed),
+         num_generations=as.numeric(num_generations),
+         stable=ifelse(klass %in% stables, 'stable-optionality', 'conventionalized')) %>%
+  ggplot(aes(x=num_generations, y=r, col=stable, group=klass)) +
+    geom_line(alpha=0.3) +
+    theme_classic() +
+    theme(legend.position="none") +
+    ggtitle("r trajectories")
+```
+
+```{r plot-facet-r-trajectories}
+# Facet by initial B_prob, t_prob
+df_results %>%
+  filter(seed %in% seed_samples) %>%
+  mutate(klass=paste0('k-', k, 'c-', c, 'seed-', seed),
+         num_generations=as.numeric(num_generations),
+         stable=ifelse(klass %in% stables, 'stable-optionality', 'conventionalized')) %>%
+  ggplot(aes(x=num_generations, y=r, col=stable, group=klass)) +
+    geom_line(alpha=0.3) +
+    theme_classic() +
+    theme(legend.position="none") +
+    facet_grid(round(t_prob, 3)*round(B_prob, 3)~.)
+```
+
+
+# Reproducing R. Levy plots
+
+## Preprocessing
+```{r}
+# R. Levy's preprocessing
+# dat$stable <- with(dat,thatrate > 0.001 & thatrate < 0.999)
+# dat <- subset(dat, ! (k==1.0 & c==0.0))
+# dat.summary <- dat %>% group_by(k,c) %>%
+#   dplyr:::summarise(stable=mean(stable),r=mean(r))
+
+# This preprocessing is only valid for stable optionality plot
+df_preprocessed <- df_results %>%
+  filter(is_final_generation) %>%
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(k != 1.0, c != 0.0) %>%
+  group_by(k, c) %>%
+  summarise(stable=mean(stable), r=mean(r))
+```
+
+## Stable optionality plot
+```{r plot-reproduce-stable-optionality-grid}
+df_preprocessed %>%
+  ggplot(aes(k,c)) + 
+    geom_tile(aes(fill=stable),colour="white") +
+    labs(y=expression(paste("String length cost parameter ", c)), fill="stable\noptionality\nrate") +
+    theme_classic() +
+    scale_x_continuous(name=expression(paste("Nonuniformity penalization parameter ",k)),
+                       breaks=seq(1,2,by=0.2))
+```
+
+
+## Marginal frequency plot
+```{r plot-marginal-frequency}
+## Distribution of marginal frequencies of optional marker t at fixed points with stable optionality
+df_results %>%
+  filter(is_final_generation) %>%
+  mutate(stable=that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(stable) %>%
+  ggplot(aes(x=that_rate,y=..density..)) + 
+    geom_histogram(bins=42) + 
+    scale_x_continuous(limits=c(-0.05,1.05)) +
+    ylab("Probability density") +
+    xlab(expression(paste("Marginal frequency of optional marker ",t))) +
+    theme_classic()
+```
+
+## Perason correlation plot
+```{r}
+## distribution of correlations between phrase onset probability and t-rate at fixed points with stable optionality
+df_results %>%
+  filter(is_final_generation) %>%
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(stable) %>%
+  ggplot(aes(x=r, y=..density..)) + 
+    geom_histogram(bins=42) + 
+    scale_x_continuous(limits=c(-1.05,1.05)) +
+    ylab("Probability density") +
+    xlab("Pearson correlation between\nphrase onset & t probabilities") + 
+    theme_classic()
+```
+
+# Additional analyses
+```{r that-rate-r-correlation}
+df_results %>% 
+  filter(is_final_generation) %>% 
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  ggplot(aes(x=that_rate, y=r, col=stable)) +
+    geom_point(alpha=0.3) +
+    theme_classic()
+```
+
+Proportion stable?
+```{r proportion-stable}
+df_results %>% 
+  filter(is_final_generation) %>% 
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  group_by(stable) %>%
+  summarise(n=n()) %>%
+  ungroup %>%
+  mutate(total=sum(n),
+         prop=n/total) %>%
+  ggplot(aes(x=stable, y=prop)) +
+    geom_bar(stat='identity') +
+    geom_text(aes(x=stable, y=prop, label=round(prop, 2)), nudge_y=0.025) +
+    ylim(0, 1) +
+    ggtitle("Proportion of simulations leading to stable optionality") +
+    theme_classic()
+```
+
+Descriptives
+```{r num-generations-cnt-stable}
+df_results %>% 
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(stable) %>%
+  select(num_generations) %>%
+  summary()
+  
+```
+
+
+```{r plot-num-generations-cnt-stable}
+df_results %>% 
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(stable) %>%
+  group_by(num_generations) %>%
+  summarise(cnt=n()) %>%
+  ggplot(aes(x=num_generations, y=cnt)) +
+    geom_bar(stat='identity') +
+    theme_classic()
+```
+
+```{r log-log-plot-num-generations-cnt-stable}
+df_results %>%
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(stable) %>%
+  mutate(num_generations=num_generations+1) %>%
+  group_by(num_generations) %>%
+  summarise(cnt=n()) %>%
+  ggplot(aes(x=log(num_generations), y=log(cnt))) +
+    geom_point(stat='identity', size=2.5, alpha=0.4) +
+    geom_smooth(method='lm') +
+    theme_classic()
+```
+
+
+Relation between `t_prob` and eventual stability?
+```{r plot-relationship-btwn-t-prob-and-stability}
+df_results %>%
+  filter(is_final_generation) %>%
+  mutate(stable = that_rate > 0.001 & that_rate < 0.999) %>%
+  filter(stable) %>%
+  ggplot(aes(x=num_generations, y=t_prob, col=k, size=c)) +
+    geom_point(alpha=0.3) +
+    theme(legend.position = 'none') +
+    theme_classic()
+```

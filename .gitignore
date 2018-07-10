@@ -3,3 +3,6 @@
 
 # Ignore output data
 *.csv
+.Rproj.user
+papers
+*.Rproj
